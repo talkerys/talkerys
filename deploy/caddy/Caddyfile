@@ -1,0 +1,4 @@
+# Reemplaza talkerys.pe por tu dominio
+talkerys.pe {
+  reverse_proxy web:3000
+}
