@@ -1,48 +1,56 @@
-import { NextRequest, NextResponse } from "next/server";
-import { jwtVerify } from "jose";
+import { createServerClient } from '@supabase/ssr'
+import { NextResponse, type NextRequest } from 'next/server'
 
-const COOKIE_NAME = "talkerys_token";
+export async function middleware(request: NextRequest) {
+  let supabaseResponse = NextResponse.next({ request })
 
-function getSecret() {
-  const secret = process.env.JWT_SECRET;
-  // In middleware, avoid throwing: just treat as unauthenticated
-  if (!secret) return null;
-  return new TextEncoder().encode(secret);
-}
+  const supabase = createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      cookies: {
+        getAll() {
+          return request.cookies.getAll()
+        },
+        setAll(cookiesToSet) {
+          cookiesToSet.forEach(({ name, value }) =>
+            request.cookies.set(name, value)
+          )
+          supabaseResponse = NextResponse.next({ request })
+          cookiesToSet.forEach(({ name, value, options }) =>
+            supabaseResponse.cookies.set(name, value, options)
+          )
+        },
+      },
+    }
+  )
 
-async function isAuthed(req: NextRequest) {
-  const secret = getSecret();
-  if (!secret) return false;
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
 
-  const token = req.cookies.get(COOKIE_NAME)?.value;
-  if (!token) return false;
+  const { pathname } = request.nextUrl
 
-  try {
-    await jwtVerify(token, secret);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-export async function middleware(req: NextRequest) {
-  const { pathname } = req.nextUrl;
-
-  // Protect pages
-  if (pathname.startsWith("/events")) {
-    const ok = await isAuthed(req);
-    if (!ok) return NextResponse.redirect(new URL("/login", req.url));
-  }
-
-  // Protect API
-  if (pathname.startsWith("/api/events")) {
-    const ok = await isAuthed(req);
-    if (!ok) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  // Protect /dashboard/* routes
+  if (pathname.startsWith('/dashboard') && !user) {
+    return NextResponse.redirect(new URL('/login', request.url))
   }
 
-  return NextResponse.next();
+  // Protect /admin/* routes
+  if (pathname.startsWith('/admin') && !user) {
+    return NextResponse.redirect(new URL('/login', request.url))
+  }
+
+  // Redirect logged-in users away from auth pages
+  if ((pathname === '/login' || pathname === '/register') && user) {
+    return NextResponse.redirect(new URL('/dashboard', request.url))
+  }
+
+  return supabaseResponse
 }
 
 export const config = {
-  matcher: ["/events/:path*", "/api/events/:path*"],
-};
+  matcher: [
+    '/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
+  ],
+}
